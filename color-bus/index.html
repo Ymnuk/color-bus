@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#7ec8f7" />
+<title>Color Bus — 3D WebGPU</title>
+<link rel="manifest" href="manifest.json" />
+<style>
+  :root{
+    --sky1:#8fd0ff; --sky2:#cdeaff;
+    --panel:rgba(255,255,255,.92);
+    --ink:#2b3a4a;
+    --accent:#ff6b6b;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; overflow:hidden; touch-action:none; overscroll-behavior:none;
+    font-family:'Segoe UI', system-ui, -apple-system, Roboto, Arial, sans-serif; }
+  body{ background:linear-gradient(var(--sky1),var(--sky2)); }
+
+  #app{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas#gl{ display:block; width:100%; height:100%; outline:none; }
+
+  /* ---------- HUD ---------- */
+  #hud{ position:fixed; top:0; left:0; right:0; display:flex; justify-content:center; gap:10px;
+        pointer-events:none; padding:calc(10px + env(safe-area-inset-top)) 12px 0; z-index:5; }
+  .scoreCard{
+    background:var(--panel); color:var(--ink); border-radius:16px; padding:8px 18px;
+    min-width:110px; text-align:center; box-shadow:0 6px 18px rgba(30,60,90,.18);
+    border:2px solid rgba(255,255,255,.8); transition:transform .15s ease;
+  }
+  .scoreCard .label{ font-size:11px; letter-spacing:1.5px; text-transform:uppercase; opacity:.65; font-weight:700; }
+  .scoreCard .value{ font-size:26px; font-weight:800; line-height:1.1; }
+  .scoreCard.best .value{ color:#f5a623; }
+  .pop{ animation:pop .35s ease; }
+  @keyframes pop{ 0%{transform:scale(1)} 40%{transform:scale(1.18)} 100%{transform:scale(1)} }
+
+  #btnSound{ position:fixed; top:calc(10px + env(safe-area-inset-top)); right:12px; z-index:6;
+    width:44px; height:44px; border-radius:50%; border:none; background:var(--panel);
+    box-shadow:0 6px 18px rgba(30,60,90,.18); font-size:20px; cursor:pointer; pointer-events:auto; }
+  #btnSound:active{ transform:scale(.92); }
+
+  /* ---------- Overlays ---------- */
+  .overlay{ position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:linear-gradient(rgba(120,190,250,.55),rgba(200,235,255,.75)); backdrop-filter:blur(6px);
+    z-index:10; transition:opacity .35s ease; text-align:center; padding:20px; }
+  .overlay.hidden{ opacity:0; pointer-events:none; }
+  .logo{ font-size:clamp(42px,9vw,72px); font-weight:900; color:#fff;
+    text-shadow:0 4px 0 #ff6b6b, 0 8px 24px rgba(0,40,80,.35); letter-spacing:1px; }
+  .logo span{ color:#ffd93d; }
+  .sub{ margin-top:10px; font-size:clamp(14px,3.4vw,19px); color:#22445e; max-width:520px; line-height:1.5; }
+  .playBtn{
+    margin-top:28px; padding:16px 54px; font-size:24px; font-weight:800; color:#fff;
+    background:linear-gradient(#ffa45c,#ff6b6b); border:none; border-radius:40px; cursor:pointer;
+    box-shadow:0 6px 0 #d94f4f, 0 14px 30px rgba(200,60,60,.35); transition:transform .12s ease;
+    pointer-events:auto;
+  }
+  .playBtn:hover{ transform:translateY(-2px); }
+  .playBtn:active{ transform:translateY(3px); box-shadow:0 2px 0 #d94f4f; }
+  .badges{ margin-top:18px; display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .badge{ background:rgba(255,255,255,.85); color:#2b3a4a; font-weight:700; font-size:13px;
+    padding:6px 14px; border-radius:20px; box-shadow:0 4px 10px rgba(30,60,90,.15); }
+  .badge.gpu{ background:#4dd08a; color:#fff; }
+  .badge.webgl{ background:#f5a623; color:#fff; }
+  #finalScore{ font-size:clamp(50px,12vw,90px); font-weight:900; color:#fff;
+    text-shadow:0 4px 0 #f5a623, 0 10px 26px rgba(0,40,80,.3); }
+  .recordFlag{ display:none; margin-top:6px; font-size:20px; font-weight:800; color:#ffd93d;
+    text-shadow:0 2px 6px rgba(0,0,0,.3); animation:shine 1s ease infinite alternate; }
+  .recordFlag.show{ display:block; }
+  @keyframes shine{ from{transform:scale(1)} to{transform:scale(1.08)} }
+
+  #toast{ position:fixed; bottom:calc(24px + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%);
+    background:rgba(43,58,74,.85); color:#fff; padding:10px 22px; border-radius:24px; font-weight:700;
+    font-size:15px; opacity:0; transition:opacity .3s ease; pointer-events:none; z-index:8; white-space:nowrap;}
+  #toast.show{ opacity:1; }
+
+  #loader{ position:fixed; inset:0; display:flex; flex-direction:column; gap:16px; align-items:center; justify-content:center;
+    background:linear-gradient(#8fd0ff,#cdeaff); z-index:20; transition:opacity .4s ease; }
+  #loader.hidden{ opacity:0; pointer-events:none; }
+  .busIcon{ width:90px; height:44px; background:#ff6b6b; border-radius:10px 14px 6px 6px; position:relative;
+    animation:drive 1.2s ease-in-out infinite; box-shadow:inset -14px 0 0 rgba(255,255,255,.35); }
+  .busIcon::before,.busIcon::after{ content:""; position:absolute; bottom:-8px; width:16px; height:16px;
+    background:#2b3a4a; border-radius:50%; }
+  .busIcon::before{ left:12px; } .busIcon::after{ right:12px; }
+  @keyframes drive{ 0%,100%{transform:translateX(-20px)} 50%{transform:translateX(20px)} }
+  .loadText{ font-weight:800; color:#22445e; font-size:18px; letter-spacing:1px; }
+
+#roundName{position:absolute;top:12px;left:50%;transform:translateX(-50%);
+  font:800 15px 'Nunito',sans-serif;color:#fff;background:rgba(20,30,60,.45);
+  padding:6px 16px;border-radius:14px;letter-spacing:.4px;pointer-events:none}
+.playBtn.alt{background:#ffb64d;color:#3a2405;margin-top:10px;font-size:16px;padding:12px 26px}
+</style>
+</head>
+<body>
+<div id="app"><canvas id="gl"></canvas></div>
+
+<div id="hud">
+  <div class="scoreCard" id="cardScore"><div class="label">Счёт</div><div class="value" id="scoreVal">0</div></div>
+  <div class="scoreCard best" id="cardBest"><div class="label">Рекорд</div><div class="value" id="bestVal">0</div></div>
+  <div id="roundName"></div>
+</div>
+<button id="btnSound" title="Звук">🔊</button>
+
+<div id="startScreen" class="overlay">
+  <div class="logo">COLOR <span>BUS</span></div>
+  <div class="sub">На площадке стоит «картинка» из цветных человечков. Автобусы ждут в 5 рядах: тот, что стоит
+    глубже, не выедет, пока не уедет автобус перед ним.<br>
+    <b>Тап по головному автобусу ряда (или клавиши 1–5)</b> — выпустить его на остановку.<br>
+    Человечки его цвета бегут сами, если путь свободен; можно тапать и по ним.<br>
+    Автобус обязан уехать <b>полностью заполненным</b>. Рассадите всех — иначе проигрыш!</div>
+  <button class="playBtn" id="btnPlay">ИГРАТЬ</button>
+  <button class="playBtn alt" id="btnEndless">БЕСКОНЕЧНЫЙ РЕЖИМ</button>
+  <div class="badges"><span class="badge" id="gpuBadge">WebGPU 3D</span><span class="badge">Мышь + тач</span></div>
+</div>
+
+<div id="overScreen" class="overlay hidden">
+  <div class="logo" style="font-size:clamp(34px,7vw,54px)">Раунд провален</div>
+  <div id="finalScore">0</div>
+  <div class="recordFlag" id="recordFlag">🏆 Новый рекорд!</div>
+  <div class="sub" id="overSub"></div>
+  <button class="playBtn" id="btnRestart">ЕЩЁ РАЗ</button>
+</div>
+
+<div id="toast"></div>
+
+<div id="loader"><div class="busIcon"></div><div class="loadText">Загрузка 3D…</div></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
